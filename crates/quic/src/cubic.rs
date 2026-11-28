@@ -10,8 +10,8 @@
 //!   it (RFC 9002 §7.3.2; RFC 9438 §4.1 keeps those rules);
 //! - an acknowledgment never shrinks the window, and in congestion
 //!   avoidance grows it by at most half (RFC 9438 §4.2: the target is
-//!   capped at 1.5 times the window), towards [`goal`], the larger of the
-//!   cubic window [`w_cubic`] and the Reno-friendly estimate (§4.3);
+//!   capped at 1.5 times the window), towards `goal`, the larger of the
+//!   cubic window `w_cubic` and the Reno-friendly estimate (§4.3);
 //! - a congestion event sets the window to [`BETA_NUM`]/[`BETA_DEN`] (0.7)
 //!   of itself, and remembers W_max with fast convergence (§4.6, §4.7).
 //!

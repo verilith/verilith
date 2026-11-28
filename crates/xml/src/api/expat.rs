@@ -24,6 +24,7 @@ use crate::decode::ex_eol;
 use crate::push::{Stream, R_ERR, R_LIMIT, R_MORE, R_OK, R_WHOLE};
 use crate::reader::Reader;
 use crate::tape::{Kind, Tok};
+use crate::walk::{Cursor, Item};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::{c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void, CStr};
@@ -262,22 +263,26 @@ enum Phase {
     Done,
 }
 
-enum FrameKind {
-    /// The root element's parent: the document, or the wrapper element of
-    /// an external entity.
-    Top,
+/// An open element, as `start_element` reported it; pushed on the walk's
+/// `Start` and popped on its `End`, which the verified cursor proves are
+/// well nested (`walk::lemma_items_balanced`).
+enum Open {
     /// An element: its name as reported (NUL-terminated), and how many
     /// namespace bindings it made.
     Elem { name_at: usize, nb: usize, stag: usize, empty: bool },
-    /// An internal entity's replacement text, read in place of a reference.
-    Entity,
+    /// The wrapper element of an external entity read as a stream: its end
+    /// is the entity's.
+    Wrapper,
 }
 
-struct Frame {
+/// A tape being walked: the document's content (the first), or an internal
+/// entity's replacement text, read in place of a reference. The verified
+/// cursor (`walk::Cursor`) says which item comes next; `opens` is how many
+/// elements were open when it began.
+struct Seg {
     src: Src,
-    i: usize,
-    end: usize,
-    kind: FrameKind,
+    cur: Cursor<'static>,
+    opens: usize,
 }
 
 /// A parser (`XML_Parser`). `user_data` is first: expat.h's
@@ -325,7 +330,6 @@ pub struct Parser {
     /// The stream handed the document back: it is read whole.
     whole: bool,
     /// The walk's place in the chunk's tokens.
-    ci: usize,
     /// Offset in the input of what callers see (an external entity's
     /// content begins after the wrapper's prefix).
     origin: usize,
@@ -350,7 +354,8 @@ pub struct Parser {
     col: usize,
     // The walk.
     phase: Phase,
-    frames: Vec<Frame>,
+    segs: Vec<Seg>,
+    opens: Vec<Open>,
     ns_stack: Vec<(Vec<u8>, Vec<u8>)>,
     last_end: usize,
     attlist_elem: (usize, usize),
@@ -438,7 +443,6 @@ impl Parser {
             epilog_cr: false,
             sdtd: false,
             whole: false,
-            ci: 0,
             origin: 0,
             raw_pre: 0,
             raw_skip: 0,
@@ -451,7 +455,8 @@ impl Parser {
             line: 1,
             col: 0,
             phase: Phase::Prolog(0),
-            frames: Vec::new(),
+            segs: Vec::new(),
+            opens: Vec::new(),
             ns_stack: Vec::new(),
             last_end: 0,
             attlist_elem: (0, 0),
@@ -639,7 +644,7 @@ impl Parser {
             while i < close && matches!(toks[i].kind, Kind::Attr | Kind::AttVal) {
                 i += 1;
             }
-            self.frames = vec![Frame { src: Src::Doc, i, end: close, kind: FrameKind::Top }];
+            self.start_content(Cursor::new(self.doc().toks(Src::Doc), i, close, 0, false), None);
             self.phase = Phase::Content;
             self.last_end = prefix_len;
         } else {
@@ -1436,8 +1441,7 @@ impl Parser {
                     while k + 1 < toks.len() && toks[k].kind == Kind::Attr {
                         k += 2;
                     }
-                    self.ci = k;
-                    self.frames = vec![Frame { src: Src::Doc, i, end: usize::MAX, kind: FrameKind::Top }];
+                    self.start_content(Cursor::new(toks, k, toks.len(), 1, false), Some(Open::Wrapper));
                     self.phase = Phase::Content;
                     self.last_end = self.origin.saturating_sub(self.sbase);
                     return Ok(());
@@ -1452,8 +1456,7 @@ impl Parser {
                 }
                 if toks[i].kind == Kind::STag {
                     self.phase = Phase::Content;
-                    self.ci = i;
-                    self.frames = vec![Frame { src: Src::Doc, i, end: usize::MAX, kind: FrameKind::Top }];
+                    self.start_content(Cursor::new(toks, i, toks.len(), 0, false), None);
                     return Ok(());
                 }
                 self.phase = Phase::Prolog(i + 1);
@@ -1463,7 +1466,8 @@ impl Parser {
                 let toks = doc.toks(Src::Doc);
                 if i >= doc.root {
                     self.phase = Phase::Content;
-                    self.frames = vec![Frame { src: Src::Doc, i: doc.root, end: doc.root + 1, kind: FrameKind::Top }];
+                    let close = toks[doc.root].c();
+                    self.start_content(Cursor::new(toks, doc.root, close + 1, 0, false), None);
                     return Ok(());
                 }
                 self.phase = Phase::Prolog(i + 1);
@@ -1898,84 +1902,77 @@ impl Parser {
         self.ent_depth == 0
     }
 
-    fn content_step(&mut self, doc: &'static Document<'static>) -> Result<(), c_int> {
-        let here = self.here();
-        if self.stream.is_some() && self.frames.last().is_some_and(|f| f.src == Src::Doc) {
-            return self.stream_step(doc, here);
-        }
-        let fr = match self.frames.last_mut() {
-            Some(f) => f,
-            None => {
-                if self.stream.is_some() {
-                    // An external entity ends with the wrapper.
-                    self.phase = if self.ext.is_some() { Phase::Done } else { Phase::Epilog(self.ci) };
-                    return Ok(());
-                }
-                let close = doc.toks(Src::Doc)[doc.root].c();
-                self.phase = if self.ext.is_some() { Phase::Done } else { Phase::Epilog(close + 1) };
-                return Ok(());
-            }
-        };
-        let (src, i, end) = (fr.src, fr.i, fr.end);
-        if i >= end {
-            let f = self.frames.pop().unwrap();
-            match f.kind {
-                FrameKind::Elem { name_at, nb, stag, empty } => self.end_element(doc, name_at, nb, stag, empty, None),
-                FrameKind::Entity => self.ent_depth -= 1,
-                FrameKind::Top => {}
-            }
-            return Ok(());
-        }
-        let toks = doc.toks(src);
-        let t = toks[i];
-        fr.i = match t.kind {
-            Kind::STag => t.c() + 1,
-            Kind::PI => i + 2,
-            _ => i + 1,
-        };
-        self.content_tok(doc, src, toks, i, here)
+    /// The content walk begins: the document's tape (or the stream's
+    /// chunk of it), with the wrapper element open if there is one.
+    fn start_content(&mut self, cur: Cursor<'static>, wrapper: Option<Open>) {
+        self.opens.clear();
+        self.opens.extend(wrapper);
+        self.segs = vec![Seg { src: Src::Doc, cur, opens: 0 }];
+        self.phase = Phase::Content;
     }
 
-    /// `content_step` in the stream's chunk: an end tag closes the element
-    /// (the tokens have no links to them).
-    fn stream_step(&mut self, doc: &'static Document<'static>, here: bool) -> Result<(), c_int> {
-        let toks = doc.toks(Src::Doc);
-        let i = self.ci;
-        if i >= toks.len() {
-            return Err(NEED_MORE);
-        }
-        let t = toks[i];
-        match t.kind {
-            Kind::ETag => {
-                self.ci = i + 1;
-                if let Some(f) = self.frames.pop() {
-                    if let FrameKind::Elem { name_at, nb, stag, empty } = f.kind {
-                        let span = if t.b() > 0 { Some((t.a(), t.b())) } else { None };
-                        self.end_element(doc, name_at, nb, stag, empty, span);
-                    }
+    /// The next item of content, from the verified cursor of the tape on
+    /// top. A stream's chunk ends with `NEED_MORE`; the document's content
+    /// ends with its root element (or an external entity's wrapper).
+    fn content_step(&mut self, doc: &'static Document<'static>) -> Result<(), c_int> {
+        let here = self.here();
+        let streamed = self.stream.is_some() && here;
+        let Some(seg) = self.segs.last_mut() else {
+            self.phase = if self.ext.is_some() { Phase::Done } else { Phase::Epilog(0) };
+            return Ok(());
+        };
+        let src = seg.src;
+        let toks = seg.cur.toks();
+        match seg.cur.next() {
+            Item::Done => {
+                if streamed {
+                    return Err(NEED_MORE);
                 }
-                if self.ext.is_none() && self.frames.len() == 1 && matches!(self.frames[0].kind, FrameKind::Top) {
-                    self.frames.clear();
-                    self.phase = Phase::Epilog(self.ci);
+                let seg = self.segs.pop().unwrap();
+                // A tape ends with its elements closed (the cursor walks
+                // balanced tapes); any left open are closed here.
+                while self.opens.len() > seg.opens {
+                    self.close_open(doc, None);
+                }
+                if self.segs.is_empty() {
+                    let close = doc.toks(Src::Doc)[doc.root].c();
+                    self.phase = if self.ext.is_some() { Phase::Done } else { Phase::Epilog(close + 1) };
+                } else {
+                    self.ent_depth -= 1;
                 }
                 Ok(())
             }
-            Kind::STag => {
-                let mut k = i + 1;
-                while k + 1 < toks.len() && toks[k].kind == Kind::Attr {
-                    k += 2;
+            Item::Start { at, next } => self.start_element(doc, src, at, next, here),
+            Item::End { at } => {
+                let t = toks[at];
+                let span = if streamed && t.b() > 0 { Some((t.a(), t.b())) } else { None };
+                let wrapper = self.close_open(doc, span);
+                if streamed {
+                    let pos = self.segs[0].cur.pos();
+                    if wrapper {
+                        // An external entity ends with the wrapper.
+                        self.segs.clear();
+                        self.phase = Phase::Done;
+                    } else if self.ext.is_none() && self.opens.is_empty() {
+                        self.segs.clear();
+                        self.phase = Phase::Epilog(pos);
+                    }
                 }
-                self.ci = k;
-                self.start_element(doc, Src::Doc, i, here)
+                Ok(())
             }
-            Kind::PI => {
-                self.ci = i + 2;
-                self.content_tok(doc, Src::Doc, toks, i, here)
+            Item::Leaf { at, .. } => self.content_tok(doc, src, toks, at, here),
+        }
+    }
+
+    /// The innermost open element ends; whether it was the wrapper.
+    fn close_open(&mut self, doc: &'static Document<'static>, span: Option<(usize, usize)>) -> bool {
+        match self.opens.pop() {
+            Some(Open::Elem { name_at, nb, stag, empty }) => {
+                self.end_element(doc, name_at, nb, stag, empty, span);
+                false
             }
-            _ => {
-                self.ci = i + 1;
-                self.content_tok(doc, Src::Doc, toks, i, here)
-            }
+            Some(Open::Wrapper) => true,
+            None => false,
         }
     }
 
@@ -1983,9 +1980,6 @@ impl Parser {
     fn content_tok(&mut self, doc: &'static Document<'static>, src: Src, toks: &'static [Tok], i: usize, here: bool) -> Result<(), c_int> {
         let t = toks[i];
         match t.kind {
-            Kind::STag => {
-                self.start_element(doc, src, i, here)?;
-            }
             Kind::Text | Kind::CData => {
                 let raw = &doc.buf(src)[t.a()..t.b()];
                 let v: Cow<[u8]> = if src == Src::Doc && t.f & 1 != 0 {
@@ -2077,8 +2071,9 @@ impl Parser {
                     }
                     return Ok(());
                 }
-                let n = doc.ent_tape(k).map_or(0, |t| t.toks.len());
-                self.frames.push(Frame { src: Src::Ent(k), i: 0, end: n, kind: FrameKind::Entity });
+                let toks = doc.toks(Src::Ent(k));
+                let cur = Cursor::new(toks, 0, toks.len(), 0, false);
+                self.segs.push(Seg { src: Src::Ent(k), cur, opens: self.opens.len() });
                 self.ent_depth += 1;
             }
             Some((k, false)) => {
@@ -2161,17 +2156,14 @@ impl Parser {
         c
     }
 
-    fn start_element(&mut self, doc: &'static Document<'static>, src: Src, idx: usize, here: bool) -> Result<(), c_int> {
+    /// The start tag at `idx`, its attributes up to `k` (the cursor's
+    /// `Start`).
+    fn start_element(&mut self, doc: &'static Document<'static>, src: Src, idx: usize, k: usize, here: bool) -> Result<(), c_int> {
         let toks = doc.toks(src);
         let t = toks[idx];
         let buf = doc.buf(src);
         // Where the tag ends, and whether it is empty.
-        let mut k = idx + 1;
-        let mut after = t.b();
-        while k + 1 < toks.len() && toks[k].kind == Kind::Attr {
-            after = toks[k + 1].b() + 1;
-            k += 2;
-        }
+        let after = if k > idx + 1 { toks[k - 1].b() + 1 } else { t.b() };
         let (tag_end, empty) = match buf[after..].iter().position(|&c| c == b'>') {
             Some(p) => (after + p + 1, after + p > 0 && buf[after + p - 1] == b'/'),
             None => (buf.len(), false),
@@ -2292,10 +2284,8 @@ impl Parser {
         } else if here {
             self.report_default(t.a() - 1, tag_end);
         }
-        let close = t.c();
-        let first = k;
         self.att_ks = att_ks;
-        self.frames.push(Frame { src, i: first, end: close, kind: FrameKind::Elem { name_at, nb, stag: t.a() - 1, empty } });
+        self.opens.push(Open::Elem { name_at, nb, stag: t.a() - 1, empty });
         Ok(())
     }
 
@@ -3018,7 +3008,12 @@ impl Parser {
         doc.set_chunk(w, tape);
         self.doc = Some(doc);
         self.sverdict = r;
-        self.ci = 0;
+        // The walk goes on in the new chunk, with the same elements open.
+        if let Some(seg) = self.segs.first_mut() {
+            let toks = self.doc.as_ref().unwrap().toks(Src::Doc);
+            let toks: &'static [Tok] = unsafe { std::slice::from_raw_parts(toks.as_ptr(), toks.len()) };
+            seg.cur = Cursor::new(toks, 0, toks.len(), seg.cur.depth(), false);
+        }
         match self.phase {
             Phase::Prolog(_) => self.phase = Phase::Prolog(0),
             Phase::Epilog(_) => self.phase = Phase::Epilog(0),

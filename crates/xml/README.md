@@ -357,6 +357,23 @@ verified in verilith-simd). The trusted base is listed under
   specifications of the SSE2 instructions it uses, to skip only bytes its
   loop's spec passes over the same way (a lemma per loop shows that), so
   the loops are proven against the same byte-at-a-time spec.
+* **The order of the C ABIs' callbacks.** `walk::items` states the order
+  in which the expat and libxml2 ABIs report a document's content: its
+  tokens left to right, a start tag with its attributes as one item, a
+  processing instruction with its data, an end tag closing the innermost
+  open element (and skipped when none is open), and, for libxml2, a run of
+  adjacent character data as one item. `walk::Cursor` is proven to give
+  exactly those items, one per call, whatever the tape and however often
+  the walk stops in between (a handler may suspend the parser; a stream
+  goes on in the next chunk with the same elements open). The lemmas say
+  what that order is: the items are in the tape's order and do not overlap,
+  only stray end tags fall between them (`lemma_items_ordered`); a start
+  item is the tag and its `Attr`, `AttVal` pairs (`lemma_items_shape`); and
+  no end comes without an open start (`lemma_items_balanced`), so the
+  start and end handlers are called well nested, and the ABIs' stacks of
+  what they reported about each open element (pushed on a start, popped on
+  its end) cannot get out of step. Each entity's replacement text is walked
+  with a cursor of its own, inside the reference.
 * **The spec says what it appears to say.** Termination checking is
   syntactic, so the spec has a few guards of the form
   `if !(i < e <= s.len()) { None }` before it continues; each step moves
@@ -391,16 +408,19 @@ verified in verilith-simd). The trusted base is listed under
   (4096 entities, 256 MiB) are counted by the loader (`Loader::count`,
   `Loader::bytes`, trusted): a wrong count can only refuse a document with
   `ErrorKind::Limit` or let more be read, never change what is accepted.
-* **The expat ABI** (`src/api/expat.rs`, about 3700 lines, feature `expat-abi`)
+* **The expat ABI** (`src/api/expat.rs`, about 3900 lines, feature `expat-abi`)
   is ordinary Rust with `unsafe` at the C boundary: it calls the caller's
   handlers with pointers into the document and into its own buffers, and
   trusts the pointers and lengths the caller passes, as a C library does.
-  It is tested by libexpat's own tests under ASan and UBSan (see
-  [The expat C ABI](#the-expat-c-abi)).
+  The order it calls the content handlers in is not its own: it takes each
+  item from the verified cursor (`src/walk.rs`, under "What is proven"),
+  and turns the item into calls. It is tested by libexpat's own tests
+  under ASan and UBSan (see [The expat C ABI](#the-expat-c-abi)).
 * **The libxml2 ABI** (`src/api/libxml2/`, about 16 000 lines, feature
   `libxml2-abi`) is the same kind of code: it builds libxml2's structs and
   trees with libxml2's allocator, frees what the caller hands back, and
-  trusts every pointer the caller passes. It is tested by libxml2's own
+  trusts every pointer the caller passes. Its walk over content takes the
+  items from the same verified cursor as the expat ABI's. It is tested by libxml2's own
   regression tests under ASan and UBSan (see
   [The libxml2 C ABI](#the-libxml2-c-abi)).
 * **The C ABIs' handlers on the push parser's pieces** are ordinary Rust
@@ -1006,6 +1026,7 @@ src/reach.rs     the external entities a document reaches, and No Recursion
 src/scan.rs      SSE2 scanners
 src/lanes.rs     SSE2 wrappers proven over verilith-simd
 src/tape.rs      the tokens
+src/walk.rs      the order the C ABIs report content in, and the cursor that gives it
 src/api.rs       the Rust API (not verified)
 src/api/expat.rs expat's C ABI, feature expat-abi (not verified)
 src/api/libxml2/ libxml2's C ABI, feature libxml2-abi (not verified): parser, SAX2, tree, save, I/O

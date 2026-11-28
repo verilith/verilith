@@ -3,7 +3,7 @@
 //! order.
 //!
 //! Proven, after any sequence of calls, of [`Reassembly`] and the map
-//! [`Reassembly::received`] of every byte received (the first copy of each
+//! `Reassembly::received` of every byte received (the first copy of each
 //! offset; QUIC requires later copies to be the same, §2.2):
 //!
 //! - the bytes the application reads are the received bytes from
@@ -12,7 +12,7 @@
 //! - [`Reassembly::contiguous`] is exactly where the received bytes stop
 //!   being contiguous, so nothing that could be read is held back;
 //! - the buffer stays below twice the window plus [`COMPACT`] bytes
-//!   ([`Reassembly::lemma_bounds`]), however the peer splits, repeats or
+//!   (`Reassembly::lemma_bounds`), however the peer splits, repeats or
 //!   overlaps its frames: data past `read_offset + window` is refused
 //!   (flow control, §4.1, keeps an honest peer inside it).
 use verilith_core::prims::extend;

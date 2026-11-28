@@ -84,6 +84,139 @@ pub fn check_store(m: &Module, st: &Store) -> (r: bool)
     true
 }
 
+/// A copy of an instance's store, to start later calls from
+/// ([`Checked::snapshot`], [`Checked::restore`]).
+pub struct Snapshot {
+    st: Store,
+}
+
+impl Snapshot {
+    /// The store the snapshot holds.
+    pub closed spec fn view(&self) -> crate::sem::Store {
+        store_view(&self.st)
+    }
+
+    /// The page limit for `memory.grow` that the snapshot holds.
+    pub fn mem_max(&self) -> (r: u32)
+        ensures r as nat == self.view().mem_max,
+    {
+        self.st.mem_max
+    }
+}
+
+fn copy_bytes(src: &Vec<u8>) -> (r: Vec<u8>)
+    ensures r@ == src@,
+{
+    let n = src.len();
+    let mut v = vec![0u8; n];
+    copy_in(&mut v, 0, src.as_slice(), 0, n);
+    proof { assert(v@ =~= src@); }
+    v
+}
+
+fn copy_u32s(src: &Vec<u32>) -> (r: Vec<u32>)
+    ensures r@ == src@,
+{
+    let mut v: Vec<u32> = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len()
+        invariant
+            0 <= i <= src@.len(),
+            v@ == src@.subrange(0, i as int),
+        decreases src@.len() - i,
+    {
+        v.push(src[i]);
+        i += 1;
+        proof { assert(v@ =~= src@.subrange(0, i as int)); }
+    }
+    proof { assert(v@ =~= src@); }
+    v
+}
+
+fn copy_u64s(src: &Vec<u64>) -> (r: Vec<u64>)
+    ensures r@ == src@,
+{
+    let mut v: Vec<u64> = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len()
+        invariant
+            0 <= i <= src@.len(),
+            v@ == src@.subrange(0, i as int),
+        decreases src@.len() - i,
+    {
+        v.push(src[i]);
+        i += 1;
+        proof { assert(v@ =~= src@.subrange(0, i as int)); }
+    }
+    proof { assert(v@ =~= src@); }
+    v
+}
+
+fn copy_bools(src: &Vec<bool>) -> (r: Vec<bool>)
+    ensures r@ == src@,
+{
+    let mut v: Vec<bool> = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len()
+        invariant
+            0 <= i <= src@.len(),
+            v@ == src@.subrange(0, i as int),
+        decreases src@.len() - i,
+    {
+        v.push(src[i]);
+        i += 1;
+        proof { assert(v@ =~= src@.subrange(0, i as int)); }
+    }
+    proof { assert(v@ =~= src@); }
+    v
+}
+
+fn copy_tables(src: &Vec<Vec<u32>>) -> (r: Vec<Vec<u32>>)
+    ensures
+        r@.len() == src@.len(),
+        forall|t: int| 0 <= t < src@.len() ==> (#[trigger] r@[t])@ == src@[t]@,
+{
+    let mut v: Vec<Vec<u32>> = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len()
+        invariant
+            0 <= i <= src@.len(),
+            v@.len() == i,
+            forall|t: int| 0 <= t < i ==> (#[trigger] v@[t])@ == src@[t]@,
+        decreases src@.len() - i,
+    {
+        v.push(copy_u32s(&src[i]));
+        i += 1;
+    }
+    v
+}
+
+/// A copy of `st`, with the same view.
+fn copy_store(st: &Store) -> (r: Store)
+    ensures
+        store_view(&r) == store_view(st),
+        r.mem_max == st.mem_max,
+{
+    let r = Store {
+        mem: copy_bytes(&st.mem),
+        mem_max: st.mem_max,
+        globals: copy_u64s(&st.globals),
+        tables: copy_tables(&st.tables),
+        dropped: copy_bools(&st.dropped),
+    };
+    proof {
+        let a = store_view(&r);
+        let b = store_view(st);
+        assert(a.tables =~= b.tables) by {
+            assert forall|t: int| 0 <= t < a.tables.len() implies a.tables[t] == b.tables[t] by {
+                assert(r.tables@[t]@ == st.tables@[t]@);
+            }
+        }
+        assert(a =~= b);
+    }
+    r
+}
+
 impl Checked {
     #[verifier::type_invariant]
     spec fn wf(self) -> bool {
@@ -112,6 +245,98 @@ impl Checked {
             stack: vec![0u64; STACK_SLOTS],
             calls: Vec::new(),
         })
+    }
+
+    /// The instance's store, as the semantics sees it.
+    pub closed spec fn view(&self) -> crate::sem::Store {
+        store_view(&self.st)
+    }
+
+    /// The memory never exceeds the page limit for `memory.grow`, which
+    /// is at most [`MAX_PAGES`]. (From the type invariant: it holds
+    /// after any call.) Does nothing at run time.
+    #[inline(always)]
+    pub fn mem_bound(&self)
+        ensures
+            self.view().mem_max <= MAX_PAGES as nat,
+            self.view().mem.len() <= self.view().mem_max * PAGE as nat,
+    {
+        proof { use_type_invariant(self); }
+    }
+
+    /// The page limit for `memory.grow`.
+    pub fn mem_max(&self) -> (r: u32)
+        ensures r as nat == self.view().mem_max,
+    {
+        self.st.mem_max
+    }
+
+    /// A copy of the store as it is now.
+    pub fn snapshot(&self) -> (r: Snapshot)
+        ensures r.view() == self.view(),
+    {
+        Snapshot { st: copy_store(&self.st) }
+    }
+
+    /// Puts the store back to `snap`: memory (contents and size), globals,
+    /// tables and dropped data segments. On `true` the store is exactly
+    /// the snapshot's; on `false` (a snapshot that does not fit this
+    /// module) it is unchanged. Memory of the same size is copied in
+    /// place, without allocating.
+    pub fn restore(self, snap: &Snapshot) -> (r: (Checked, bool))
+        ensures
+            r.1 ==> r.0.view() == snap.view(),
+            !r.1 ==> r.0.view() == self.view(),
+    {
+        proof { use_type_invariant(&self); }
+        let Checked { m, cs, codes, st, stack, calls } = self;
+        let s = &snap.st;
+        if !check_store(&m, s) {
+            return (Checked { m, cs, codes, st, stack, calls }, false);
+        }
+        let mut mem = st.mem;
+        if mem.len() == s.mem.len() {
+            let n = mem.len();
+            copy_in(&mut mem, 0, s.mem.as_slice(), 0, n);
+            proof { assert(mem@ =~= s.mem@); }
+        } else {
+            mem = copy_bytes(&s.mem);
+        }
+        let mut globals = st.globals;
+        if globals.len() == s.globals.len() {
+            let mut i = 0;
+            while i < globals.len()
+                invariant
+                    globals@.len() == s.globals@.len(),
+                    0 <= i <= globals@.len(),
+                    forall|j: int| 0 <= j < i ==> #[trigger] globals@[j] == s.globals@[j],
+                decreases globals@.len() - i,
+            {
+                globals.set(i, s.globals[i]);
+                i += 1;
+            }
+            proof { assert(globals@ =~= s.globals@); }
+        } else {
+            globals = copy_u64s(&s.globals);
+        }
+        let st2 = Store {
+            mem,
+            mem_max: s.mem_max,
+            globals,
+            tables: copy_tables(&s.tables),
+            dropped: copy_bools(&s.dropped),
+        };
+        proof {
+            let a = store_view(&st2);
+            let b = store_view(s);
+            assert(a.tables =~= b.tables) by {
+                assert forall|t: int| 0 <= t < a.tables.len() implies a.tables[t] == b.tables[t] by {
+                    assert(st2.tables@[t]@ == s.tables@[t]@);
+                }
+            }
+            assert(a =~= b);
+        }
+        (Checked { m, cs, codes, st: st2, stack, calls }, true)
     }
 
     pub fn module(&self) -> &Module {

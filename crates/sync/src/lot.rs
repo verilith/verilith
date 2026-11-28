@@ -11,7 +11,7 @@
 //! and each waiter's flag. The other half of `list` belongs to the
 //! parking lot: [`lock_bucket`] hands it to the thread that locks the
 //! lock's bucket, together with the fact that ties it to the bucket's
-//! contents ([`listed`]: the waiters listed under the key are the lock's,
+//! contents (`listed`: the waiters listed under the key are the lock's,
 //! and their tickets are exactly `list`), and [`unlock_bucket`] takes it
 //! back and checks that the fact still holds and that no other key's
 //! waiters were touched. So within a critical section the lock's code

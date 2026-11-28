@@ -15,7 +15,7 @@
 //!   for A-profile defines them.
 //! - Carry-less multiplication: `PCLMULQDQ` (and `VPCLMULQDQ` per lane)
 //!   and AArch64 `PMULL`/`PMULL2` on 64-bit elements: the carry-less
-//!   product of two 64-bit operands, [`gf::clmul`].
+//!   product of two 64-bit operands, `gf::clmul`.
 //! - Byte shuffles (`PSHUFB`), 32-bit lane addition (`PADDD`), 64-bit lane
 //!   shifts (`PSLLQ`, `PSRLQ`) and whole-register byte shifts (`PSLLDQ`,
 //!   `PSRLDQ`), on the register as a 128-bit integer.

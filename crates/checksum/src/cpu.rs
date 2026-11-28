@@ -252,10 +252,17 @@ fn crc32c_hw(reg: u32, d: &[u8]) -> (r: u32)
     ensures
         r == crc32c_from(reg, d@),
 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         // SAFETY: only called after `has_crc32c` returned true.
         unsafe { tf_crc32c::crc32c_sse42(reg, d) }
+    }
+    // Soft-float x86-64 (`x86_64-unknown-none`): rustc refuses to enable
+    // SSE4.2 there, and `has_crc32c` is false without it, so this never
+    // runs; the table code keeps the contract.
+    #[cfg(all(target_arch = "x86_64", not(target_feature = "sse2")))]
+    {
+        super::crc32c_update(reg, d)
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -303,9 +310,10 @@ mod tf {
 }
 
 /// The CRC-32C trampoline, kept apart from `tf`: `crc32` takes and returns
-/// general-purpose registers, so it builds on every x86-64 target,
-/// including those without SSE registers.
-#[cfg(target_arch = "x86_64")]
+/// general-purpose registers, but enabling SSE4.2 implies SSE, which rustc
+/// rejects on soft-float targets (`x86_softfloat_sse`), so it is compiled
+/// only where the target has SSE registers.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod tf_crc32c {
     #[target_feature(enable = "sse4.2")]
     pub(super) unsafe fn crc32c_sse42(reg: u32, d: &[u8]) -> u32 {

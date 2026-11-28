@@ -469,6 +469,25 @@ impl Instance {
         }
     }
 
+    /// The checked instance inside, for an embedder that drives it
+    /// directly with its own (verified) host, such as verilith-serverless.
+    /// `None` if an earlier call panicked.
+    pub fn into_checked(self) -> Option<Checked> {
+        self.inner
+    }
+
+    /// The index of the exported function `name`, with its parameter and
+    /// result types.
+    pub fn export_func(&self, name: &str) -> Option<(u32, &[ValType], &[ValType])> {
+        match self.exports.get(name.as_bytes()) {
+            Some(&ExportDesc::Func(x)) => {
+                let (p, r) = &self.types[x as usize];
+                Some((x, p, r))
+            }
+            _ => None,
+        }
+    }
+
     /// Writes `bytes` into linear memory at `offset`.
     pub fn write_memory(&mut self, offset: usize, bytes: &[u8]) -> Result<(), Error> {
         let inner = self.inner.take().ok_or(Error::Call("instance poisoned by an earlier panic".into()))?;

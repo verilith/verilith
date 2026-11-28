@@ -18,7 +18,7 @@ at 0.81 to 1.03 times wasmi's time and 1.04 to 1.47 times wasm3's on the
 benchmarks below (the stack interpreter it replaced took 2.5 to 3.4 times
 wasmi's, in an earlier run).
 
-**Verification status.** `cargo verus verify` checks 763 functions with
+**Verification status.** `cargo verus verify` checks 779 functions with
 no errors (about 5 minutes with two threads on a 4-core Linux VM, for
 both a 64-bit and a 32-bit target). The translation to register form (`src/reg.rs`) is mostly marked
 `external_body` (its small leaf helpers are verified for panics and
@@ -35,6 +35,7 @@ output matters.
 | Refinement: the interpreter computes what the semantics computes. `execute` returns ghost `(hs, n)` such that running the semantics for `n` steps, with `hs` the host's responses (the store each host call left behind), ends with exactly the interpreter's result values or trap and exactly its store. `hs` also records whether each `memory.grow` got its memory. If the interpreter stops with `Exhausted` (call depth, stack limit or fuel), the semantics is still running with that store | `run::execute`, against `sem::run` (`run::executed`) |
 | Branch resolution: the compiled code's precomputed branch targets, frame sizes and arities are the certificate's | `compile::compile_all` ensures `interp::codes_ok` |
 | Register form: every operation computes, on every value stack, what the run of instructions it stands for computes on the flat machine; runs partition the body and start at every branch target | `rcheck::check_rcode` ensures `rcheck::rcode_ok` (part of `codes_ok`); `mach::lemma_msteps` carries the flat machine over to the semantics |
+| Snapshots: `Checked::snapshot` copies the store, and `Checked::restore` puts it back (memory contents and size, globals, tables, dropped segments), so an embedder can start every call from the same state ([verilith-serverless](../serverless) does, per request) | `instance::Checked::restore` ensures `view() == snap.view()` |
 | The boundary holds for any caller: a `Checked` instance can only be built by `Checked::new`, which runs the checker, compiles, and checks the initial store; its type invariant (checked certificates, compiled code, a well-formed store, a fixed-size value stack) is what `execute` requires, so every call from unverified code runs under the theorems above | `instance::Checked` (`#[verifier::type_invariant]`) |
 
 The semantics (`src/sem.rs`) is a small-step machine over the decoded
@@ -254,7 +255,7 @@ the exporting instance. Implementation limits: 100,000 nested calls,
   went through the label's arity, which for a `loop` is its parameter
   count, so a loop with results lost them. The semantics, the proofs and
   the checker were fixed together.
-- `fuzz/`: differential testing against wasmi 2.0.2. wasm-smith 0.263.0
+- `fuzz/`: differential testing against wasmi 2.0.3. wasm-smith 0.263.0
   generates modules using only the features above (NaNs canonicalized,
   loops fuel-bounded); every exported function is called with three
   argument sets in both engines, comparing results, traps, linear memory

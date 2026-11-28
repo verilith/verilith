@@ -1,11 +1,11 @@
 //! HTTP/2 stream states (RFC 9113 §5.1), verified: what a frame received
 //! on a stream does, given the stream's state.
 //!
-//! [`verdict`] is the specification, a table over the server's view of a
+//! `verdict` is the specification, a table over the server's view of a
 //! stream: idle (an even ID, which a client never opens, or one above the
 //! highest it has opened), open, half-closed (remote), or closed.
 //! [`classify`] computes it exactly. The theorems
-//! ([`lemma_opens_only_new_odd`], [`lemma_data_only_open`]): only a
+//! (`lemma_opens_only_new_odd`, `lemma_data_only_open`): only a
 //! HEADERS frame opens a stream, only on an odd ID above every ID opened
 //! before it (§5.1.1, so IDs only increase), and DATA is taken only on an
 //! open stream.
@@ -107,7 +107,7 @@ pub proof fn lemma_data_only_open(id: u32, last: u32, known: Option<St>)
 {
 }
 
-/// [`verdict`], computed.
+/// `verdict`, computed.
 pub fn classify(id: u32, last: u32, known: Option<St>, k: Kind) -> (r: Verdict)
     ensures r == verdict(id, last, known, k),
 {

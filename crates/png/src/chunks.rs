@@ -261,9 +261,12 @@ fn step_exec(b: &[u8], h: &Header, p: usize, len: u32, ty: u32, st: &mut WalkX, 
     let critical = is_critical_exec(ty);
     // Only critical chunks, tRNS and bKGD need their CRC: any other chunk is
     // skipped whether or not it is correct.
-    if critical || ty == 0x7452_4e53 || ty == 0x624b_4744 {
+    // A PLTE before IDAT in an image without a palette is used whatever its
+    // CRC.
+    let plte_any_crc = ty == 0x504c_5445 && h.color_type != 3 && st.phase == 0;
+    if (critical || ty == 0x7452_4e53 || ty == 0x624b_4744) && !plte_any_crc {
         if !crc_ok(b, p, len) {
-            if critical && !(ty == 0x504c_5445 && h.color_type != 3 && st.phase == 0) {
+            if critical {
                 return Err(false);
             } else {
                 if st.phase == 1 {

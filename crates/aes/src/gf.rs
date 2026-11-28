@@ -1,14 +1,14 @@
 //! GF(2^128) as the kernels compute it: SP 800-38D's bit-serial product
-//! ([`spec::gf_mul`]) is a carry-less product of the two blocks followed
+//! (`spec::gf_mul`) is a carry-less product of the two blocks followed
 //! by a reduction, and from that, the algebra the kernels rely on:
 //! commutativity, associativity, distributivity over XOR, and GHASH over
 //! many blocks as one sum of products with powers of H (aggregated
 //! reduction).
 //!
-//! Blocks are [`spec::be128`] integers: bit i of the block, the
+//! Blocks are `spec::be128` integers: bit i of the block, the
 //! coefficient of t^i, is integer bit 127 - i. The carry-less product of
 //! two such integers has the coefficient of t^k of the product at bit
-//! 254 - k (it is bit-reversed); [`red`] shifts it left by one and reduces
+//! 254 - k (it is bit-reversed); `red` shifts it left by one and reduces
 //! it modulo t^128 + t^7 + t^2 + t + 1 by shifts and XORs.
 #![allow(unused_imports)]
 use crate::spec::*;
